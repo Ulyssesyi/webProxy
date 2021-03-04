@@ -98,7 +98,7 @@ class server
                     $this->_client[$fd]->send($buffer);
                 }
             }
-            while (true) {
+            while (true && isset($this->_client[$fd])) {
                 $data = $this->_client[$fd]->recv();
                 if (strlen($data) > 0) {
                     //将收到的数据转发到客户端
