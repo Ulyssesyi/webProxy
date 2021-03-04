@@ -1,0 +1,21 @@
+{
+    "name": "yijin/web-proxy",
+    "description": "swoole透明代理服务器",
+    "type": "project",
+    "require": {
+        "php": ">=7.3",
+        "ext-openssl": "*",
+        "ext-swoole": "*",
+        "ext-sockets": "*"
+    },
+    "require-dev": {
+        "swoole/ide-helper": "^4.6"
+    },
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Yi Jin",
+            "email": "uyijin@gmail.com"
+        }
+    ]
+}
