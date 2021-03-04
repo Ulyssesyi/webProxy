@@ -8,6 +8,19 @@ class server
 
     private $_client = [];
     private $_server;
+    private $_needAuth;
+    private $_authUser;
+    private $_authPass;
+
+    public function __construct($needAuth = false, $user = '', $pass = '')
+    {
+        $this->_needAuth = $needAuth;
+        if ($needAuth && (!$user || !$pass)) {
+            throw new Exception('必须传入账号密码');
+        }
+        $this->_authUser = $user;
+        $this->_authPass = $pass;
+    }
 
     /**
      * 日志打印
@@ -60,10 +73,29 @@ class server
         });
 
         $this->_server->on('Receive', function ($server, $fd, $reactor_id, $buffer) {
-
             //判断是否为新连接
             if (!isset($this->_client[$fd])) {
                 //判断代理模式
+                if ($this->_needAuth) {
+                    $authPass = false;
+                    $arr = explode(PHP_EOL, $buffer);
+                    foreach ($arr as $item) {
+                        if (strpos($item, 'Proxy-Authorization') !== false) {
+                            list($key, $type, $value) = explode(' ', $item, 3);
+                            if ($type === 'Basic') {
+                                $info = base64_decode($value);
+                                list($user, $pass) = explode(':', $info);
+                                if ($user==$this->_authUser && $pass==$this->_authPass) {
+                                    $authPass = true;
+                                }
+                            }
+                        }
+                    }
+                    if (!$authPass) {
+                        $this->_server->send($fd, '认证失败');
+                        return;
+                    }
+                }
                 list($method, $url) = explode(' ', $buffer, 3);
                 $url = parse_url($url);
 
