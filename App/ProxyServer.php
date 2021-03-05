@@ -1,9 +1,10 @@
 <?php
+namespace App;
 /**
  * Web代理服务器(支持http/https)
  * @author zhjx922
  */
-class server
+class ProxyServer
 {
 
     private $_client = [];
@@ -36,7 +37,7 @@ class server
         //获取代理IP
         $ipList = swoole_get_local_ip();
         foreach ($ipList as $interface => $ip) {
-            $this->log("{$interface}:{$ip}");
+            $this->log("服务器IP:{$ip}");
         }
     }
 
@@ -48,7 +49,7 @@ class server
     {
         $this->getLocalIp();
 
-        $this->_server = new Swoole\Server("0.0.0.0", 8999);
+        $this->_server = new \Swoole\Server("0.0.0.0", 8999);
 
         $this->_server->set([
             'buffer_output_size' => 64 * 1024 * 1024, //必须为数字
@@ -91,7 +92,7 @@ class server
             }
             if (!isset($this->_client[$fd])) {
                 //判断代理模式
-                list($method, $url) = explode(' ', $buffer, 3);
+                list(, $url) = explode(' ', $buffer, 3);
                 $url = parse_url($url);
 
                 //ipv6为啥外面还有个方括号？
@@ -105,17 +106,10 @@ class server
 
                 //ipv4/v6处理
                 $tcpMode = strpos($url['host'], ':') !== false ? SWOOLE_SOCK_TCP6 : SWOOLE_SOCK_TCP;
-                $this->_client[$fd] = new Swoole\Coroutine\Client($tcpMode);
+                $this->_client[$fd] = new \Swoole\Client($tcpMode);
                 if ($this->_client[$fd]->connect($host, $port)) {
-                    if ($method == 'CONNECT') {
-                        $this->log("隧道模式-连接成功!");
-                        //告诉客户端准备就绪，可以继续发包
-                        $this->_server->send($fd, "HTTP/1.1 200 Connection Established\r\n\r\n");
-                    } else {
-                        $this->log("正常模式-连接成功!");
-                        //直接转发数据
-                        $this->_client[$fd]->send($buffer);
-                    }
+                    //直接转发数据
+                    $this->_client[$fd]->send($buffer);
                 } else {
                     $this->log("Client {$fd} error");
                 }
@@ -125,36 +119,31 @@ class server
                     $this->_client[$fd]->send($buffer);
                 }
             }
-            while (true && isset($this->_client[$fd])) {
-                $data = $this->_client[$fd]->recv();
-                if (strlen($data) > 0) {
-                    //将收到的数据转发到客户端
-                    if ($this->_server->exist($fd)) {
-                        $this->_server->send($fd, $data);
-                    }
+            $data = $this->_client[$fd]->recv();
+            $this->log('recv:' . $data);
+            if (strlen($data) > 0) {
+                //将收到的数据转发到客户端
+                if ($this->_server->exist($fd)) {
+                    $this->_server->send($fd, $data);
+                }
+            } else {
+                if ($data === '') {
+                    // 全等于空 直接关闭连接
+                    $this->log("返回空-连接关闭!");
+                    $this->_client[$fd]->close();
                 } else {
-                    if ($data === '') {
-                        // 全等于空 直接关闭连接
-                        $this->log("返回空-连接关闭!");
-                        $this->_client[$fd]->close();
-                        break;
-                    } else {
-                        if ($data === false) {
-                            // 可以自行根据业务逻辑和错误码进行处理，例如：
-                            // 如果超时时则不关闭连接，其他情况直接关闭连接
-                            if ($this->_client[$fd]->errCode !== SOCKET_ETIMEDOUT) {
-                                $this->log("连接超时-连接关闭!");
-                                $this->_client[$fd]->close();
-                                break;
-                            }
-                        } else {
-                            $this->log("其他异常-连接关闭!");
+                    if ($data === false) {
+                        // 可以自行根据业务逻辑和错误码进行处理，例如：
+                        // 如果超时时则不关闭连接，其他情况直接关闭连接
+                        if ($this->_client[$fd]->errCode !== SOCKET_ETIMEDOUT) {
+                            $this->log("连接超时-连接关闭!");
                             $this->_client[$fd]->close();
-                            break;
                         }
+                    } else {
+                        $this->log("其他异常-连接关闭!");
+                        $this->_client[$fd]->close();
                     }
                 }
-                \Swoole\Coroutine::sleep(1);
             }
         });
 

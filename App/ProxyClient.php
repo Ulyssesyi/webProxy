@@ -1,10 +1,12 @@
 <?php
+namespace App;
 /**
  * Web代理客户端(支持http/https)
  */
-class client
+class ProxyClient
 {
     private $_client = [];
+    private $_cacheBuffer = [];
     private $_server;
     private $_proxyHost;
     private $_authUser;
@@ -31,7 +33,7 @@ class client
      */
     protected function init()
     {
-        $this->_server = new Swoole\Server("0.0.0.0", 8998);
+        $this->_server = new \Swoole\Server("0.0.0.0", 8998);
 
         $this->_server->set([
             'buffer_output_size' => 64 * 1024 * 1024, //必须为数字
@@ -49,11 +51,17 @@ class client
         $this->_server->on('Receive', function ($server, $fd, $reactor_id, $buffer) {
             //判断是否为新连接
             $this->log($buffer);
+            list($method,) = explode(' ', $buffer, 3);
+            if ($method == 'CONNECT') {
+                $this->log("隧道模式-连接成功!");
+                //告诉客户端准备就绪，可以继续发包
+                $this->_server->send($fd, "HTTP/1.1 200 Connection Established\r\n\r\n");
+            }
             $data = $this->generateEncryptData($buffer);
             if (!isset($this->_client[$fd])) {
-                $this->_client[$fd] = new Swoole\Coroutine\Client(SWOOLE_SOCK_TCP);
+                $this->_client[$fd] = new \Swoole\Client(SWOOLE_SOCK_TCP);
                 if ($this->_client[$fd]->connect($this->_proxyHost, '8999')) {
-                    $this->log("连接成功!");
+                    $this->log("连接成功!{$fd}");
                     //直接转发数据
                     $this->_client[$fd]->send($data);
                 } else {
@@ -62,39 +70,35 @@ class client
             } else {
                 //已连接，正常转发数据
                 if ($this->_client[$fd]->isConnected()) {
+                    $this->log("继续发送数据!{$fd}");
                     $this->_client[$fd]->send($data);
                 }
             }
-            while (true && isset($this->_client[$fd])) {
-                $data = $this->_client[$fd]->recv();
-                if (strlen($data) > 0) {
-                    //将收到的数据转发到客户端
-                    if ($this->_server->exist($fd)) {
-                        $this->_server->send($fd, $data);
-                    }
+            $data = $this->_client[$fd]->recv();
+            $this->log('recv:' . $data);
+            if (strlen($data) > 0) {
+                //将收到的数据转发到客户端
+                if ($this->_server->exist($fd)) {
+                    $this->_server->send($fd, $data);
+                }
+            } else {
+                if ($data === '') {
+                    // 全等于空 直接关闭连接
+                    $this->log("返回空-连接关闭!");
+                    $this->_client[$fd]->close();
                 } else {
-                    if ($data === '') {
-                        // 全等于空 直接关闭连接
-                        $this->log("返回空-连接关闭!");
-                        $this->_client[$fd]->close();
-                        break;
-                    } else {
-                        if ($data === false) {
-                            // 可以自行根据业务逻辑和错误码进行处理，例如：
-                            // 如果超时时则不关闭连接，其他情况直接关闭连接
-                            if ($this->_client[$fd]->errCode !== SOCKET_ETIMEDOUT) {
-                                $this->log("连接超时-连接关闭!");
-                                $this->_client[$fd]->close();
-                                break;
-                            }
-                        } else {
-                            $this->log("其他异常-连接关闭!");
+                    if ($data === false) {
+                        // 可以自行根据业务逻辑和错误码进行处理，例如：
+                        // 如果超时时则不关闭连接，其他情况直接关闭连接
+                        if ($this->_client[$fd]->errCode !== SOCKET_ETIMEDOUT) {
+                            $this->log("连接超时-连接关闭!");
                             $this->_client[$fd]->close();
-                            break;
                         }
+                    } else {
+                        $this->log("其他异常-连接关闭!");
+                        $this->_client[$fd]->close();
                     }
                 }
-                \Swoole\Coroutine::sleep(1);
             }
         });
 
