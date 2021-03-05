@@ -59,11 +59,11 @@ class ProxyClient
             }
             $data = $this->generateEncryptData($buffer);
             if (!isset($this->_client[$fd])) {
-                $this->_client[$fd] = new \Swoole\Client(SWOOLE_SOCK_TCP);
-                if ($this->_client[$fd]->connect($this->_proxyHost, '8999')) {
+                $this->_client[$fd] = new \Swoole\Coroutine\Http\Client($this->_proxyHost, '8999');
+                if ($this->_client[$fd]->upgrade('')) {
                     $this->log("连接成功!{$fd}");
                     //直接转发数据
-                    $this->_client[$fd]->send($data);
+                    $this->_client[$fd]->push($data);
                 } else {
                     $this->log("Client {$fd} error");
                 }
@@ -71,33 +71,14 @@ class ProxyClient
                 //已连接，正常转发数据
                 if ($this->_client[$fd]->isConnected()) {
                     $this->log("继续发送数据!{$fd}");
-                    $this->_client[$fd]->send($data);
+                    $this->_client[$fd]->push($data);
                 }
             }
             $data = $this->_client[$fd]->recv();
             $this->log('recv:' . $data);
-            if (strlen($data) > 0) {
-                //将收到的数据转发到客户端
-                if ($this->_server->exist($fd)) {
-                    $this->_server->send($fd, $data);
-                }
-            } else {
-                if ($data === '') {
-                    // 全等于空 直接关闭连接
-                    $this->log("返回空!");
-                } else {
-                    if ($data === false) {
-                        // 可以自行根据业务逻辑和错误码进行处理，例如：
-                        // 如果超时时则不关闭连接，其他情况直接关闭连接
-                        if ($this->_client[$fd]->errCode !== SOCKET_ETIMEDOUT) {
-                            $this->log("连接超时-连接关闭!");
-                            $this->_client[$fd]->close();
-                        }
-                    } else {
-                        $this->log("其他异常-连接关闭!");
-                        $this->_client[$fd]->close();
-                    }
-                }
+            //将收到的数据转发到客户端
+            if ($this->_server->exist($fd)) {
+                $this->_server->send($fd, $data);
             }
         });
 

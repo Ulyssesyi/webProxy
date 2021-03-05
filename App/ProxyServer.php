@@ -49,7 +49,7 @@ class ProxyServer
     {
         $this->getLocalIp();
 
-        $this->_server = new \Swoole\Server("0.0.0.0", 8999);
+        $this->_server = new \Swoole\WebSocket\Server("0.0.0.0", 8999);
 
         $this->_server->set([
             'buffer_output_size' => 64 * 1024 * 1024, //必须为数字
@@ -64,31 +64,19 @@ class ProxyServer
     {
         $this->init();
 
-        $this->_server->on('Connect', function ($server, $fd) {
-            $this->log("Server connection open: {$fd}");
+        $this->_server->on('Open', function ($server, $request) {
+            $this->log("Server connection open: {$request->fd}");
         });
 
-        $this->_server->on('Receive', function ($server, $fd, $reactor_id, $encryptData) {
+        $this->_server->on('Message', function ($server, $frame) {
             //判断是否为新连接
-            list($header, $buffer) = $this->decryptData($encryptData);
+            $encryptData = $frame->data;
+            $fd = $frame->fd;
+            list($authStr, $buffer) = explode(' ', $encryptData, 2);
             $this->log($buffer);
-            if ($this->_authUser) {
-                $authPass = false;
-                foreach ($header as $item) {
-                    list($key, $value) = explode(' ', $item, 2);
-                    if ($key === 'Authorization:') {
-                        list($type, $authStr) = explode(' ', $value, 2);
-                        if ($type === 'Basic') {
-                            if ($authStr === md5($this->_authUser . $this->_authPass)) {
-                                $authPass = true;
-                            }
-                        }
-                    }
-                }
-                if (!$authPass) {
-                    $this->_server->send($fd, '认证失败');
-                    return;
-                }
+            if ($this->_authUser && $authStr !== md5($this->_authUser . $this->_authPass)) {
+                $this->_server->push($fd, '认证失败');
+                return;
             }
             if (!isset($this->_client[$fd])) {
                 //判断代理模式
@@ -121,28 +109,8 @@ class ProxyServer
             }
             $data = $this->_client[$fd]->recv();
             $this->log('recv:' . $data);
-            if (strlen($data) > 0) {
-                //将收到的数据转发到客户端
-                if ($this->_server->exist($fd)) {
-                    $this->_server->send($fd, $data);
-                }
-            } else {
-                if ($data === '') {
-                    // 全等于空 直接关闭连接
-                    $this->log("返回空!");
-                } else {
-                    if ($data === false) {
-                        // 可以自行根据业务逻辑和错误码进行处理，例如：
-                        // 如果超时时则不关闭连接，其他情况直接关闭连接
-                        if ($this->_client[$fd]->errCode !== SOCKET_ETIMEDOUT) {
-                            $this->log("连接超时-连接关闭!");
-                            $this->_client[$fd]->close();
-                        }
-                    } else {
-                        $this->log("其他异常-连接关闭!");
-                        $this->_client[$fd]->close();
-                    }
-                }
+            if ($this->_server->exist($fd)) {
+                $this->_server->push($fd, $data);
             }
         });
 
@@ -153,12 +121,5 @@ class ProxyServer
         });
 
         $this->_server->start();
-    }
-
-    private function decryptData($encryptData) {
-        $data = explode(PHP_EOL, $encryptData);
-        $realInfo = array_pop($data);
-        list(,$realData) = explode('=', $realInfo, 2);
-        return [$data, base64_decode($realData)];
     }
 }
