@@ -84,8 +84,7 @@ class ProxyClient
             } else {
                 if ($data === '') {
                     // 全等于空 直接关闭连接
-                    $this->log("返回空-连接关闭!");
-                    $this->_client[$fd]->close();
+                    $this->log("返回空!");
                 } else {
                     if ($data === false) {
                         // 可以自行根据业务逻辑和错误码进行处理，例如：
@@ -104,6 +103,7 @@ class ProxyClient
 
         $this->_server->on('Close', function ($server, $fd) {
             $this->log("Server connection close: {$fd}");
+            $this->_client[$fd]->close();
             unset($this->_client[$fd]);
         });
 
