@@ -8,16 +8,11 @@ class server
 
     private $_client = [];
     private $_server;
-    private $_needAuth;
     private $_authUser;
     private $_authPass;
 
-    public function __construct($needAuth = false, $user = '', $pass = '')
+    public function __construct($user = '', $pass = '')
     {
-        $this->_needAuth = $needAuth;
-        if ($needAuth && (!$user || !$pass)) {
-            throw new Exception('必须传入账号密码');
-        }
         $this->_authUser = $user;
         $this->_authPass = $pass;
     }
@@ -72,30 +67,30 @@ class server
             $this->log("Server connection open: {$fd}");
         });
 
-        $this->_server->on('Receive', function ($server, $fd, $reactor_id, $buffer) {
+        $this->_server->on('Receive', function ($server, $fd, $reactor_id, $encryptData) {
             //判断是否为新连接
-            if (!isset($this->_client[$fd])) {
-                //判断代理模式
-                if ($this->_needAuth) {
-                    $authPass = false;
-                    $arr = explode(PHP_EOL, $buffer);
-                    foreach ($arr as $item) {
-                        if (strpos($item, 'Proxy-Authorization') !== false) {
-                            list($key, $type, $value) = explode(' ', $item, 3);
-                            if ($type === 'Basic') {
-                                $info = base64_decode($value);
-                                list($user, $pass) = explode(':', $info);
-                                if ($user==$this->_authUser && $pass==$this->_authPass) {
-                                    $authPass = true;
-                                }
+            list($header, $buffer) = $this->decryptData($encryptData);
+            $this->log($buffer);
+            if ($this->_authUser) {
+                $authPass = false;
+                foreach ($header as $item) {
+                    list($key, $value) = explode(' ', $item, 2);
+                    if ($key === 'Authorization:') {
+                        list($type, $authStr) = explode(' ', $value, 2);
+                        if ($type === 'Basic') {
+                            if ($authStr === md5($this->_authUser . $this->_authPass)) {
+                                $authPass = true;
                             }
                         }
                     }
-                    if (!$authPass) {
-                        $this->_server->send($fd, '认证失败');
-                        return;
-                    }
                 }
+                if (!$authPass) {
+                    $this->_server->send($fd, '认证失败');
+                    return;
+                }
+            }
+            if (!isset($this->_client[$fd])) {
+                //判断代理模式
                 list($method, $url) = explode(' ', $buffer, 3);
                 $url = parse_url($url);
 
@@ -169,5 +164,12 @@ class server
         });
 
         $this->_server->start();
+    }
+
+    private function decryptData($encryptData) {
+        $data = explode(PHP_EOL, $encryptData);
+        $realInfo = array_pop($data);
+        list(,$realData) = explode('=', $realInfo, 2);
+        return [$data, base64_decode($realData)];
     }
 }
